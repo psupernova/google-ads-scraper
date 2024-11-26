@@ -5,7 +5,7 @@ import logging
 from datetime import datetime
 import random
 import time
-import base64
+from urllib.parse import quote
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -13,39 +13,35 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Configuração do proxy scrape.do
+# Configuração do scrape.do
 SCRAPE_DO_TOKEN = "292e31943f0a4e9d83ecd521934fb885ee24c38eac6"
 
-def get_headers():
-    # Criar header de autenticação básica
-    auth = base64.b64encode(f"{SCRAPE_DO_TOKEN}:".encode()).decode()
-    
-    return {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Connection': 'keep-alive',
-        'Proxy-Authorization': f'Basic {auth}'
-    }
-
 def make_request(url, max_retries=3):
-    proxies = {
-        'http': 'http://proxy.scrape.do:8080',
-        'https': 'http://proxy.scrape.do:8080'
+    # URL da API do scrape.do
+    scrape_do_url = "https://api.scrape.do/scrape"
+    
+    # Parâmetros para a API
+    params = {
+        'token': SCRAPE_DO_TOKEN,
+        'url': url,
+        'customHeaders': {
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
+        },
+        'geoCode': 'br',
+        'renderJs': False,
+        'proxyType': 'residential'
     }
     
     for attempt in range(max_retries):
         try:
-            response = requests.get(
-                url,
-                headers=get_headers(),
-                proxies=proxies,
-                verify=False,  # Necessário para alguns proxies
-                timeout=30
-            )
+            response = requests.post(scrape_do_url, json=params, timeout=30)
             response.raise_for_status()
-            return response
+            
+            # A API retorna um objeto com a propriedade 'body' contendo o HTML
+            return response.json()['body']
+            
         except Exception as e:
             logger.error(f"Tentativa {attempt + 1} falhou: {str(e)}")
             if attempt < max_retries - 1:
@@ -74,13 +70,13 @@ def scrape_ads():
         logger.info(f"Iniciando scraping para: {search_term}")
 
         # Construir URL de pesquisa
-        search_url = f"https://www.google.com.br/search?q={search_term}&hl=pt-BR&gl=BR"
+        search_url = f"https://www.google.com.br/search?q={quote(search_term)}&hl=pt-BR&gl=BR"
         
-        # Fazer requisição usando proxy do scrape.do
-        response = make_request(search_url)
+        # Fazer requisição usando API do scrape.do
+        html_content = make_request(search_url)
         
         # Parsear HTML
-        soup = BeautifulSoup(response.text, 'html.parser')
+        soup = BeautifulSoup(html_content, 'html.parser')
         
         # Encontrar anúncios
         ads = []
@@ -128,7 +124,7 @@ def scrape_ads():
             logger.warning("Nenhum anúncio encontrado na página")
             # Para debug, vamos salvar o HTML quando não encontrar anúncios
             with open('debug.html', 'w', encoding='utf-8') as f:
-                f.write(response.text)
+                f.write(html_content)
             return jsonify({
                 "success": False,
                 "error": "Nenhum anúncio encontrado para este termo"

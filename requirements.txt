@@ -5,3 +5,5 @@ beautifulsoup4==4.9.3
 urllib3==1.26.7
 fake-useragent==1.1.1
 redis==4.5.1
+gunicorn==20.1.0
+Werkzeug==2.0.1

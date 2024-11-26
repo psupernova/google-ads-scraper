@@ -4,12 +4,6 @@ from bs4 import BeautifulSoup
 import random
 import logging
 from datetime import datetime
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from typing import List
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -28,33 +22,9 @@ def get_random_headers():
     return {
         'User-Agent': random.choice(USER_AGENTS),
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
         'Connection': 'keep-alive',
     }
-
-class AdExtension:
-    def __init__(self, text, type):
-        self.text = text
-        self.type = type
-
-class Advertisement:
-    def __init__(self, timestamp, termo_busca, titulo, descricao, link_destino, link_exibido, extensoes):
-        self.timestamp = timestamp
-        self.termo_busca = termo_busca
-        self.titulo = titulo
-        self.descricao = descricao
-        self.link_destino = link_destino
-        self.link_exibido = link_exibido
-        self.extensoes = extensoes
-
-def setup_driver():
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.binary_location = '/usr/bin/chromium-browser'
-    return webdriver.Chrome(options=chrome_options)
 
 @app.route('/')
 def home():
@@ -77,75 +47,62 @@ def scrape_ads():
         logger.info(f"Iniciando scraping para: {search_term}")
 
         # Construir URL de pesquisa
-        search_url = f"https://www.google.com.br/search?q={search_term}&hl=pt-BR&gl=BR"
+        search_url = f"https://www.google.com/search?q={search_term}&hl=pt-BR&gl=BR"
         
         # Fazer requisição
-        driver = setup_driver()
-        driver.get(search_url)
+        response = requests.get(search_url, headers=get_random_headers())
+        response.raise_for_status()
         
-        # Esperar pelos anúncios
-        WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "div.uEierd"))
-        )
+        # Parsear HTML
+        soup = BeautifulSoup(response.text, 'html.parser')
         
-        ads = driver.find_elements(By.CSS_SELECTOR, "div.uEierd")
-        results = []
+        # Encontrar anúncios
+        ads = []
+        ad_divs = soup.find_all('div', {'class': 'uEierd'})
         
-        for index, ad in enumerate(ads):
-            try:
-                titulo = ad.find_element(By.CSS_SELECTOR, "div.CCgQ5").text
-                descricao = ad.find_element(By.CSS_SELECTOR, "div.MUxGbd.yDYNvb.lyLwlc").text
-                link_element = ad.find_element(By.CSS_SELECTOR, "a.sVXRqc")
-                link_destino = link_element.get_attribute("href")
-                link_exibido = ad.find_element(By.CSS_SELECTOR, "span.VuuXrf").text
-                
-                extensoes = []
-                try:
-                    extension_elements = ad.find_elements(By.CSS_SELECTOR, "span.r0bn4c.rQMQod")
-                    for ext in extension_elements:
-                        extensoes.append(AdExtension(
-                            text=ext.text,
-                            type="extension"
-                        ))
-                except Exception as e:
-                    logger.warning(f"Failed to extract extensions for ad {index}: {str(e)}")
-                
-                results.append(Advertisement(
-                    timestamp=datetime.now().isoformat(),
-                    termo_busca=search_term,
-                    titulo=titulo,
-                    descricao=descricao,
-                    link_destino=link_destino,
-                    link_exibido=link_exibido,
-                    extensoes=extensoes
-                ))
-                logger.info(f"Successfully processed ad {index}")
-            except Exception as e:
-                logger.error(f"Error processing ad {index}: {str(e)}")
-                continue
+        for ad in ad_divs:
+            ad_data = {
+                "timestamp": datetime.now().isoformat(),
+                "search_term": search_term,
+                "title": "",
+                "description": "",
+                "destination_link": "",
+                "displayed_link": "",
+                "extensions": []
+            }
+            
+            # Título
+            title_elem = ad.find('div', {'role': 'heading'})
+            if title_elem:
+                ad_data["title"] = title_elem.get_text()
+            
+            # Link de destino
+            link_elem = ad.find('a')
+            if link_elem:
+                ad_data["destination_link"] = link_elem.get('href', '')
+            
+            # Link exibido
+            displayed_link = ad.find('span', {'class': 'VuuXrf'})
+            if displayed_link:
+                ad_data["displayed_link"] = displayed_link.get_text()
+            
+            # Descrição
+            description = ad.find('div', {'class': 'VwiC3b'})
+            if description:
+                ad_data["description"] = description.get_text()
+            
+            # Extensões
+            extensions = ad.find_all('div', {'class': 'MUxGbd'})
+            ad_data["extensions"] = [ext.get_text() for ext in extensions if ext.get_text()]
+            
+            ads.append(ad_data)
         
-        driver.quit()
-        logger.info(f"Scraping completed. Found {len(results)} ads")
+        logger.info(f"Encontrados {len(ads)} anúncios")
         return jsonify({
             "success": True,
             "search_term": search_term,
-            "ads_count": len(results),
-            "ads": [
-                {
-                    "timestamp": ad.timestamp,
-                    "search_term": ad.termo_busca,
-                    "title": ad.titulo,
-                    "description": ad.descricao,
-                    "destination_link": ad.link_destino,
-                    "displayed_link": ad.link_exibido,
-                    "extensions": [
-                        {
-                            "text": ext.text,
-                            "type": ext.type
-                        } for ext in ad.extensoes
-                    ]
-                } for ad in results
-            ]
+            "ads_count": len(ads),
+            "ads": ads
         })
 
     except Exception as e:

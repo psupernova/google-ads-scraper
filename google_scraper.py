@@ -3,6 +3,8 @@ import requests
 from bs4 import BeautifulSoup
 import logging
 from datetime import datetime
+import random
+import time
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -10,21 +12,42 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-def get_scraping_ant_response(url):
-    api_key = "72e2a2bb8f724d0586b5596fb8b51612"
-    scraping_ant_url = 'https://api.scrapingant.com/v2/general'
-    
-    headers = {
-        'x-api-key': api_key
+# Configuração do proxy scrape.do
+SCRAPE_DO_TOKEN = "292e31943f0a4e9d83ecd521934fb885ee24c38eac6"
+PROXY_URL = f"http://{SCRAPE_DO_TOKEN}@proxy.scrape.do:8080"
+
+def get_headers():
+    return {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive'
+    }
+
+def make_request(url, max_retries=3):
+    proxies = {
+        'http': PROXY_URL,
+        'https': PROXY_URL
     }
     
-    params = {
-        'url': url,
-        'proxy_country': 'br'
-    }
-    
-    response = requests.get(scraping_ant_url, headers=headers, params=params)
-    return response
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(
+                url,
+                headers=get_headers(),
+                proxies=proxies,
+                verify=False,  # Necessário para alguns proxies
+                timeout=30
+            )
+            response.raise_for_status()
+            return response
+        except Exception as e:
+            logger.error(f"Tentativa {attempt + 1} falhou: {str(e)}")
+            if attempt < max_retries - 1:
+                time.sleep(random.uniform(1, 3))
+            else:
+                raise
 
 @app.route('/')
 def home():
@@ -49,16 +72,8 @@ def scrape_ads():
         # Construir URL de pesquisa
         search_url = f"https://www.google.com.br/search?q={search_term}&hl=pt-BR&gl=BR"
         
-        # Fazer requisição usando Scraping Ant
-        response = get_scraping_ant_response(search_url)
-        
-        if response.status_code != 200:
-            logger.error(f"Erro Scraping Ant: Status {response.status_code}, Resposta: {response.text}")
-            return jsonify({
-                "success": False,
-                "error": f"Erro ao fazer requisição: {response.status_code}",
-                "details": response.text
-            }), 500
+        # Fazer requisição usando proxy do scrape.do
+        response = make_request(search_url)
         
         # Parsear HTML
         soup = BeautifulSoup(response.text, 'html.parser')
@@ -106,6 +121,10 @@ def scrape_ads():
                 ads.append(ad_data)
         
         if not ads:
+            logger.warning("Nenhum anúncio encontrado na página")
+            # Para debug, vamos salvar o HTML quando não encontrar anúncios
+            with open('debug.html', 'w', encoding='utf-8') as f:
+                f.write(response.text)
             return jsonify({
                 "success": False,
                 "error": "Nenhum anúncio encontrado para este termo"

@@ -18,29 +18,41 @@ SCRAPE_DO_TOKEN = "292e31943f0a4e9d83ecd521934fb885ee24c38eac6"
 
 def make_request(url, max_retries=3):
     # URL da API do scrape.do
-    scrape_do_url = "https://api.scrape.do/scrape"
+    scrape_do_url = "https://api.scrape.do/v1/scrape"
+    
+    # Headers para autenticação
+    headers = {
+        'Authorization': f'Bearer {SCRAPE_DO_TOKEN}',
+        'Content-Type': 'application/json'
+    }
     
     # Parâmetros para a API
     params = {
-        'token': SCRAPE_DO_TOKEN,
         'url': url,
-        'customHeaders': {
+        'headers': {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
             'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
         },
-        'geoCode': 'br',
-        'renderJs': False,
-        'proxyType': 'residential'
+        'country': 'br',
+        'render_js': False
     }
     
     for attempt in range(max_retries):
         try:
-            response = requests.post(scrape_do_url, json=params, timeout=30)
-            response.raise_for_status()
+            logger.info(f"Fazendo requisição para scrape.do: {url}")
+            response = requests.post(scrape_do_url, headers=headers, json=params, timeout=30)
             
-            # A API retorna um objeto com a propriedade 'body' contendo o HTML
-            return response.json()['body']
+            if response.status_code != 200:
+                logger.error(f"Erro na API do scrape.do: {response.status_code} - {response.text}")
+                raise Exception(f"Erro na API do scrape.do: {response.status_code}")
+            
+            data = response.json()
+            if 'html' not in data:
+                logger.error(f"Resposta inesperada do scrape.do: {data}")
+                raise Exception("Resposta inesperada do scrape.do")
+                
+            return data['html']
             
         except Exception as e:
             logger.error(f"Tentativa {attempt + 1} falhou: {str(e)}")

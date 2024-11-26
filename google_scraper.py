@@ -20,44 +20,46 @@ app = Flask(__name__)
 # Configuração do scrape.do
 SCRAPE_DO_TOKEN = "292e31943f0a4e9d83ecd521934fb885ee24c38eac6"
 
-def get_headers():
-    return {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+def make_request(url, max_retries=3):
+    # URL da API do scrape.do
+    scrape_do_url = f"https://api.scrape.do/?token={SCRAPE_DO_TOKEN}&url={quote(url)}"
+    
+    headers = {
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
         'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Connection': 'keep-alive'
-    }
-
-def make_request(url, max_retries=3):
-    # Configurar proxy do scrape.do
-    proxies = {
-        'http': f'http://{SCRAPE_DO_TOKEN}:@proxy.scrape.do:8080',
-        'https': f'http://{SCRAPE_DO_TOKEN}:@proxy.scrape.do:8080'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
     }
     
     for attempt in range(max_retries):
         try:
-            logger.info(f"Tentativa {attempt + 1} de {max_retries}")
+            logger.info(f"Tentativa {attempt + 1} de {max_retries} para URL: {url}")
             
             response = requests.get(
-                url,
-                headers=get_headers(),
-                proxies=proxies,
-                verify=False,
+                scrape_do_url,
+                headers=headers,
                 timeout=30
             )
             
+            logger.info(f"Status code: {response.status_code}")
+            logger.info(f"Response headers: {response.headers}")
+            
             if response.status_code != 200:
-                logger.error(f"Erro HTTP: {response.status_code} - {response.text}")
-                raise Exception(f"Erro HTTP: {response.status_code}")
-                
+                error_msg = f"Erro na requisição: {response.status_code}"
+                try:
+                    error_msg += f" - {response.json()}"
+                except:
+                    error_msg += f" - {response.text}"
+                logger.error(error_msg)
+                raise Exception(error_msg)
+            
             return response.text
             
         except Exception as e:
             logger.error(f"Tentativa {attempt + 1} falhou: {str(e)}")
             if attempt < max_retries - 1:
-                time.sleep(random.uniform(2, 5))
+                wait_time = random.uniform(2, 5)
+                logger.info(f"Aguardando {wait_time:.2f} segundos antes da próxima tentativa")
+                time.sleep(wait_time)
             else:
                 raise
 
@@ -84,7 +86,7 @@ def scrape_ads():
         # Construir URL de pesquisa
         search_url = f"https://www.google.com.br/search?q={quote(search_term)}&hl=pt-BR&gl=BR"
         
-        # Fazer requisição usando proxy do scrape.do
+        # Fazer requisição
         html_content = make_request(search_url)
         
         # Parsear HTML

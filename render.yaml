@@ -3,7 +3,7 @@ services:
     name: google-ads-scraper
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn google_scraper:app --bind 0.0.0.0:$PORT
+    startCommand: gunicorn google_scraper:app --bind 0.0.0.0:$PORT --timeout 120 --workers 2
     envVars:
       - key: PORT
         value: 10000

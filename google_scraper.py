@@ -130,34 +130,35 @@ def make_request(url, max_retries=5):
             # Escolher um proxy aleatório
             proxy = random.choice(PROXY_LIST)
             
-            # Configurar proxy do scrape.do
+            # Configurar proxy do scrape.do (formato atualizado)
+            proxy_url = f"http://{SCRAPE_DO_TOKEN}@{proxy}:8080"
             proxies = {
-                'http': f'http://{SCRAPE_DO_TOKEN}:@{proxy}:8080',
-                'https': f'http://{SCRAPE_DO_TOKEN}:@{proxy}:8080'
+                'http': proxy_url,
+                'https': proxy_url
             }
             
             # Delay aleatório entre requisições
-            wait_time = random.uniform(5, 15)
+            wait_time = random.uniform(1, 3)  # Reduzido para evitar timeout
             logger.info(f"Aguardando {wait_time:.2f} segundos antes da requisição")
             time.sleep(wait_time)
             
             logger.info(f"Tentativa {attempt + 1} de {max_retries} usando proxy: {proxy}")
             
-            # Fazer a requisição com headers aleatórios
+            # Fazer a requisição com headers aleatórios e timeout menor
             response = requests.get(
                 url,
                 headers=get_random_headers(),
                 proxies=proxies,
                 verify=False,
-                timeout=30
+                timeout=10,  # Reduzido para evitar timeout do worker
+                allow_redirects=True
             )
             
             logger.info(f"Status code: {response.status_code}")
-            logger.info(f"Response headers: {response.headers}")
             
             if response.status_code == 429:  # Too Many Requests
                 logger.warning("Limite de requisições atingido, aguardando mais tempo")
-                time.sleep(random.uniform(30, 60))
+                time.sleep(random.uniform(5, 10))  # Reduzido para evitar timeout
                 continue
                 
             if response.status_code != 200:
@@ -171,10 +172,24 @@ def make_request(url, max_retries=5):
             
             return response.text
             
-        except Exception as e:
-            logger.error(f"Tentativa {attempt + 1} falhou: {str(e)}")
+        except requests.exceptions.ProxyError as e:
+            logger.error(f"Erro de proxy na tentativa {attempt + 1}: {str(e)}")
             if attempt < max_retries - 1:
-                wait_time = random.uniform(10, 30)
+                wait_time = random.uniform(1, 3)  # Reduzido para evitar timeout
+                logger.info(f"Aguardando {wait_time:.2f} segundos antes da próxima tentativa")
+                time.sleep(wait_time)
+            else:
+                raise Exception("Todos os proxies falharam")
+        except requests.exceptions.Timeout:
+            logger.error(f"Timeout na tentativa {attempt + 1}")
+            if attempt < max_retries - 1:
+                continue
+            else:
+                raise Exception("Timeout em todas as tentativas")
+        except Exception as e:
+            logger.error(f"Erro na tentativa {attempt + 1}: {str(e)}")
+            if attempt < max_retries - 1:
+                wait_time = random.uniform(1, 3)  # Reduzido para evitar timeout
                 logger.info(f"Aguardando {wait_time:.2f} segundos antes da próxima tentativa")
                 time.sleep(wait_time)
             else:

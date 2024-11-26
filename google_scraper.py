@@ -6,6 +6,10 @@ from datetime import datetime
 import random
 import time
 from urllib.parse import quote
+import urllib3
+
+# Desabilitar avisos SSL
+urllib3.disable_warnings()
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -16,48 +20,44 @@ app = Flask(__name__)
 # Configuração do scrape.do
 SCRAPE_DO_TOKEN = "292e31943f0a4e9d83ecd521934fb885ee24c38eac6"
 
-def make_request(url, max_retries=3):
-    # URL da API do scrape.do
-    scrape_do_url = "https://api.scrape.do/v1/scrape"
-    
-    # Headers para autenticação
-    headers = {
-        'Authorization': f'Bearer {SCRAPE_DO_TOKEN}',
-        'Content-Type': 'application/json'
+def get_headers():
+    return {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive'
     }
-    
-    # Parâmetros para a API
-    params = {
-        'url': url,
-        'headers': {
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-            'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
-        },
-        'country': 'br',
-        'render_js': False
+
+def make_request(url, max_retries=3):
+    # Configurar proxy do scrape.do
+    proxies = {
+        'http': f'http://{SCRAPE_DO_TOKEN}:@proxy.scrape.do:8080',
+        'https': f'http://{SCRAPE_DO_TOKEN}:@proxy.scrape.do:8080'
     }
     
     for attempt in range(max_retries):
         try:
-            logger.info(f"Fazendo requisição para scrape.do: {url}")
-            response = requests.post(scrape_do_url, headers=headers, json=params, timeout=30)
+            logger.info(f"Tentativa {attempt + 1} de {max_retries}")
+            
+            response = requests.get(
+                url,
+                headers=get_headers(),
+                proxies=proxies,
+                verify=False,
+                timeout=30
+            )
             
             if response.status_code != 200:
-                logger.error(f"Erro na API do scrape.do: {response.status_code} - {response.text}")
-                raise Exception(f"Erro na API do scrape.do: {response.status_code}")
-            
-            data = response.json()
-            if 'html' not in data:
-                logger.error(f"Resposta inesperada do scrape.do: {data}")
-                raise Exception("Resposta inesperada do scrape.do")
+                logger.error(f"Erro HTTP: {response.status_code} - {response.text}")
+                raise Exception(f"Erro HTTP: {response.status_code}")
                 
-            return data['html']
+            return response.text
             
         except Exception as e:
             logger.error(f"Tentativa {attempt + 1} falhou: {str(e)}")
             if attempt < max_retries - 1:
-                time.sleep(random.uniform(1, 3))
+                time.sleep(random.uniform(2, 5))
             else:
                 raise
 
@@ -84,7 +84,7 @@ def scrape_ads():
         # Construir URL de pesquisa
         search_url = f"https://www.google.com.br/search?q={quote(search_term)}&hl=pt-BR&gl=BR"
         
-        # Fazer requisição usando API do scrape.do
+        # Fazer requisição usando proxy do scrape.do
         html_content = make_request(search_url)
         
         # Parsear HTML

@@ -12,6 +12,7 @@ from fake_useragent import UserAgent
 import redis
 import hashlib
 import os
+from cachetools import TTLCache
 
 # Desabilitar avisos SSL
 urllib3.disable_warnings()
@@ -22,13 +23,27 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
+# Cache em memória como fallback
+memory_cache = TTLCache(maxsize=100, ttl=3600)  # 1 hora de TTL
+
 # Configuração do Redis
-redis_client = redis.Redis(
-    host=os.getenv('REDIS_HOST', 'localhost'),
-    port=int(os.getenv('REDIS_PORT', 6379)),
-    db=0,
-    decode_responses=True
-)
+try:
+    redis_client = redis.Redis(
+        host=os.getenv('REDIS_HOST', 'localhost'),
+        port=int(os.getenv('REDIS_PORT', 6379)),
+        db=0,
+        decode_responses=True,
+        socket_timeout=2,  # Timeout curto para falhar rápido
+        socket_connect_timeout=2
+    )
+    # Testar conexão
+    redis_client.ping()
+    logger.info("Redis conectado com sucesso")
+    USE_REDIS = True
+except Exception as e:
+    logger.warning(f"Erro ao conectar ao Redis: {str(e)}. Usando cache em memória.")
+    redis_client = None
+    USE_REDIS = False
 
 # Configuração do scrape.do
 SCRAPE_DO_TOKEN = "292e31943f0a4e9d83ecd521934fb885ee24c38eac6"
@@ -53,11 +68,16 @@ def get_from_cache(search_term):
     """Tenta obter resultados do cache"""
     try:
         cache_key = get_cache_key(search_term)
-        cached_data = redis_client.get(cache_key)
         
-        if cached_data:
-            logger.info(f"Cache hit para termo: {search_term}")
-            return json.loads(cached_data)
+        if USE_REDIS:
+            cached_data = redis_client.get(cache_key)
+            if cached_data:
+                logger.info(f"Cache hit (Redis) para termo: {search_term}")
+                return json.loads(cached_data)
+        else:
+            if cache_key in memory_cache:
+                logger.info(f"Cache hit (Memória) para termo: {search_term}")
+                return memory_cache[cache_key]
             
         logger.info(f"Cache miss para termo: {search_term}")
         return None
@@ -70,12 +90,17 @@ def save_to_cache(search_term, data):
     """Salva os resultados no cache"""
     try:
         cache_key = get_cache_key(search_term)
-        redis_client.setex(
-            cache_key,
-            CACHE_EXPIRATION,
-            json.dumps(data)
-        )
-        logger.info(f"Dados salvos no cache para termo: {search_term}")
+        
+        if USE_REDIS:
+            redis_client.setex(
+                cache_key,
+                CACHE_EXPIRATION,
+                json.dumps(data)
+            )
+            logger.info(f"Dados salvos no cache (Redis) para termo: {search_term}")
+        else:
+            memory_cache[cache_key] = data
+            logger.info(f"Dados salvos no cache (Memória) para termo: {search_term}")
         
     except Exception as e:
         logger.error(f"Erro ao salvar no cache: {str(e)}")
@@ -162,7 +187,8 @@ def home():
         "endpoints": {
             "/": "Esta mensagem",
             "/scrape": "POST - Recebe search_term e retorna anúncios do Google"
-        }
+        },
+        "cache_status": "Redis" if USE_REDIS else "Memory"
     })
 
 @app.route('/scrape', methods=['POST'])
@@ -319,6 +345,7 @@ def scrape_ads():
             "ads_count": len(ads),
             "ads": ads,
             "cached": False,
+            "cache_type": "Redis" if USE_REDIS else "Memory",
             "cache_expires_in": CACHE_EXPIRATION
         }
         

@@ -5,6 +5,7 @@ import logging
 from datetime import datetime
 import random
 import time
+import base64
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -14,21 +15,24 @@ app = Flask(__name__)
 
 # Configuração do proxy scrape.do
 SCRAPE_DO_TOKEN = "292e31943f0a4e9d83ecd521934fb885ee24c38eac6"
-PROXY_URL = f"http://{SCRAPE_DO_TOKEN}@proxy.scrape.do:8080"
 
 def get_headers():
+    # Criar header de autenticação básica
+    auth = base64.b64encode(f"{SCRAPE_DO_TOKEN}:".encode()).decode()
+    
     return {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
         'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
         'Accept-Encoding': 'gzip, deflate, br',
-        'Connection': 'keep-alive'
+        'Connection': 'keep-alive',
+        'Proxy-Authorization': f'Basic {auth}'
     }
 
 def make_request(url, max_retries=3):
     proxies = {
-        'http': PROXY_URL,
-        'https': PROXY_URL
+        'http': 'http://proxy.scrape.do:8080',
+        'https': 'http://proxy.scrape.do:8080'
     }
     
     for attempt in range(max_retries):

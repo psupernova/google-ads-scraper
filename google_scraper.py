@@ -57,8 +57,20 @@ PROXY_LIST = [
     "fr.residential.proxy.scrape.do"
 ]
 
-# Configuração do cache
-CACHE_EXPIRATION = 3600  # 1 hora em segundos
+# Lista de proxies gratuitos como fallback
+FREE_PROXY_LIST = [
+    "187.60.46.112:8080",  # BR
+    "177.93.44.53:999",    # BR
+    "186.121.235.66:8080", # BR
+    "190.90.242.208:999",  # US
+    "157.245.27.9:3128",   # US
+]
+
+def get_proxy_url(proxy, use_scrape_do=True):
+    """Retorna a URL do proxy formatada corretamente"""
+    if use_scrape_do:
+        return f"http://{SCRAPE_DO_TOKEN}@{proxy}:8080"
+    return f"http://{proxy}"
 
 def get_cache_key(search_term):
     """Gera uma chave única para o cache baseada no termo de pesquisa"""
@@ -94,7 +106,7 @@ def save_to_cache(search_term, data):
         if USE_REDIS:
             redis_client.setex(
                 cache_key,
-                CACHE_EXPIRATION,
+                3600,
                 json.dumps(data)
             )
             logger.info(f"Dados salvos no cache (Redis) para termo: {search_term}")
@@ -125,75 +137,66 @@ def get_random_headers():
     }
 
 def make_request(url, max_retries=5):
+    errors = []
+    
+    # Primeiro tenta com proxies do scrape.do
     for attempt in range(max_retries):
         try:
-            # Escolher um proxy aleatório
             proxy = random.choice(PROXY_LIST)
+            proxy_url = get_proxy_url(proxy, use_scrape_do=True)
             
-            # Configurar proxy do scrape.do (formato atualizado)
-            proxy_url = f"http://{SCRAPE_DO_TOKEN}@{proxy}:8080"
-            proxies = {
-                'http': proxy_url,
-                'https': proxy_url
-            }
+            logger.info(f"Tentativa {attempt + 1} com proxy scrape.do: {proxy}")
             
-            # Delay aleatório entre requisições
-            wait_time = random.uniform(1, 3)  # Reduzido para evitar timeout
-            logger.info(f"Aguardando {wait_time:.2f} segundos antes da requisição")
-            time.sleep(wait_time)
-            
-            logger.info(f"Tentativa {attempt + 1} de {max_retries} usando proxy: {proxy}")
-            
-            # Fazer a requisição com headers aleatórios e timeout menor
             response = requests.get(
                 url,
                 headers=get_random_headers(),
-                proxies=proxies,
+                proxies={'http': proxy_url, 'https': proxy_url},
                 verify=False,
-                timeout=10,  # Reduzido para evitar timeout do worker
+                timeout=10,
                 allow_redirects=True
             )
             
-            logger.info(f"Status code: {response.status_code}")
-            
-            if response.status_code == 429:  # Too Many Requests
-                logger.warning("Limite de requisições atingido, aguardando mais tempo")
-                time.sleep(random.uniform(5, 10))  # Reduzido para evitar timeout
-                continue
+            if response.status_code == 200:
+                return response.text
                 
-            if response.status_code != 200:
-                error_msg = f"Erro na requisição: {response.status_code}"
-                try:
-                    error_msg += f" - {response.json()}"
-                except:
-                    error_msg += f" - {response.text}"
-                logger.error(error_msg)
-                raise Exception(error_msg)
-            
-            return response.text
-            
-        except requests.exceptions.ProxyError as e:
-            logger.error(f"Erro de proxy na tentativa {attempt + 1}: {str(e)}")
-            if attempt < max_retries - 1:
-                wait_time = random.uniform(1, 3)  # Reduzido para evitar timeout
-                logger.info(f"Aguardando {wait_time:.2f} segundos antes da próxima tentativa")
-                time.sleep(wait_time)
-            else:
-                raise Exception("Todos os proxies falharam")
-        except requests.exceptions.Timeout:
-            logger.error(f"Timeout na tentativa {attempt + 1}")
-            if attempt < max_retries - 1:
-                continue
-            else:
-                raise Exception("Timeout em todas as tentativas")
         except Exception as e:
-            logger.error(f"Erro na tentativa {attempt + 1}: {str(e)}")
-            if attempt < max_retries - 1:
-                wait_time = random.uniform(1, 3)  # Reduzido para evitar timeout
-                logger.info(f"Aguardando {wait_time:.2f} segundos antes da próxima tentativa")
-                time.sleep(wait_time)
-            else:
-                raise
+            error = f"Erro com proxy scrape.do {proxy}: {str(e)}"
+            logger.error(error)
+            errors.append(error)
+            time.sleep(random.uniform(1, 3))
+    
+    # Se falhar, tenta com proxies gratuitos
+    logger.warning("Todos os proxies scrape.do falharam, tentando proxies gratuitos")
+    
+    for attempt in range(max_retries):
+        try:
+            proxy = random.choice(FREE_PROXY_LIST)
+            proxy_url = get_proxy_url(proxy, use_scrape_do=False)
+            
+            logger.info(f"Tentativa {attempt + 1} com proxy gratuito: {proxy}")
+            
+            response = requests.get(
+                url,
+                headers=get_random_headers(),
+                proxies={'http': proxy_url, 'https': proxy_url},
+                verify=False,
+                timeout=10,
+                allow_redirects=True
+            )
+            
+            if response.status_code == 200:
+                return response.text
+                
+        except Exception as e:
+            error = f"Erro com proxy gratuito {proxy}: {str(e)}"
+            logger.error(error)
+            errors.append(error)
+            time.sleep(random.uniform(1, 3))
+    
+    # Se todos os proxies falharem
+    error_msg = "Todos os proxies falharam. Erros:\n" + "\n".join(errors)
+    logger.error(error_msg)
+    raise Exception(error_msg)
 
 @app.route('/')
 def home():
@@ -361,7 +364,7 @@ def scrape_ads():
             "ads": ads,
             "cached": False,
             "cache_type": "Redis" if USE_REDIS else "Memory",
-            "cache_expires_in": CACHE_EXPIRATION
+            "cache_expires_in": 3600
         }
         
         # Salvar no cache

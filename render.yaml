@@ -1,9 +1,13 @@
 services:
   - type: web
     name: google-ads-scraper
-    env: python
+    runtime: python
+    region: oregon
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn google_scraper:app
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.12
+      - key: PORT
+        value: 8000

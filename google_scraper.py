@@ -3,7 +3,6 @@ import requests
 from bs4 import BeautifulSoup
 import logging
 from datetime import datetime
-import os
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -15,14 +14,16 @@ def get_scraping_ant_response(url):
     api_key = "72e2a2bb8f724d0586b5596fb8b51612"
     scraping_ant_url = 'https://api.scrapingant.com/v2/general'
     
-    params = {
-        'url': url,
-        'x-api-key': api_key,
-        'browser': 'false',
-        'proxy_country': 'BR'
+    headers = {
+        'x-api-key': api_key
     }
     
-    response = requests.get(scraping_ant_url, params=params)
+    params = {
+        'url': url,
+        'proxy_country': 'br'
+    }
+    
+    response = requests.get(scraping_ant_url, headers=headers, params=params)
     return response
 
 @app.route('/')
@@ -52,9 +53,11 @@ def scrape_ads():
         response = get_scraping_ant_response(search_url)
         
         if response.status_code != 200:
+            logger.error(f"Erro Scraping Ant: Status {response.status_code}, Resposta: {response.text}")
             return jsonify({
                 "success": False,
-                "error": f"Erro ao fazer requisição: {response.status_code}"
+                "error": f"Erro ao fazer requisição: {response.status_code}",
+                "details": response.text
             }), 500
         
         # Parsear HTML
